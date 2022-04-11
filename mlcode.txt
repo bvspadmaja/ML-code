@@ -1,0 +1,192 @@
+! pip install seaborn_qqplot imblearn
+# imports
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from seaborn_qqplot import pplot
+
+
+from sklearn import preprocessing
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.manifold import TSNE
+from imblearn.over_sampling import RandomOverSampler 
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+
+from sklearn.metrics import confusion_matrix
+from sklearn.svm import SVC
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import classification_report
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
+
+
+import warnings
+warnings.filterwarnings("ignore")
+dataPath = 'data/data.csv'
+df = pd.read_csv(dataPath)
+df.head(5)
+print('Shape of the dataframe', df.shape)
+df.info()
+print('Columns:', df.columns)
+# plotting nan values
+df.isnull().sum().plot(kind = 'bar');
+plt.grid(True)
+# checking duplicated rows in the dataframe
+print('Duplicated rows:', df.duplicated().sum())
+# plotting barplot of all the Botnet rows
+plt.figure(figsize = (12, 8))
+sns.set_style("whitegrid")
+sns.countplot(x = 'Botnet', data = df);
+plt.xticks(rotation=90);
+# some information regarding the source IP and target IP
+si_length = len(df.SourceIp.unique())
+ti_length = len(df.TargetIp.unique())
+
+s_ports = len(df.SourcePort.unique())
+t_ports = len(df.TargetPort.unique())
+
+print(f"There are {si_length} number of source IP and {ti_length} number of target unique target IP availabel.")
+print(f"There are {s_ports} number of source ports and {t_ports} number of ports availabel.")
+# The confidence is high when the prediction is 0
+# when the prediction is 1, then both we have same number of low and high confidence threats
+sns.countplot(x = 'Threat.Confidence', data = df, hue = 'Prediction');
+# most of the sourceIpAsnNr is AS4788
+plt.figure(figsize = (15, 8))
+sns.countplot(x = 'SourceIpAsnNr', data = df);
+plt.xticks(rotation=90);
+# barplot of locations 
+plt.figure(figsize = (20, 8))
+sns.countplot(x = 'SourceIpCity', data = df);
+plt.xticks(rotation=90);
+# when the prediction is 1,
+# the threts classify is mostly 1.
+sns.countplot(x = 'Threat_Classify', data = df, hue = 'Prediction');
+# clearning the data
+# dropping the z column
+df.drop(labels = ['z'], axis = 1, inplace = True)
+# dropping all the nan values
+df.dropna(how='any', inplace = True)
+# checing if there is any NAN value present
+df.isnull().sum()
+# pairplot of all the features
+sns.pairplot(df, hue = 'Prediction');
+# both the sourcePort and TargetPort do not follow the same distribution
+pplot(df,
+      x="SourcePort",
+      y="TargetPort",
+      kind='qq', height=4, aspect=2);
+plt.show()
+# encoding features
+source_ip_dict = df.SourceIp.value_counts().to_dict()
+target_ip_dict = df.TargetIp.value_counts().to_dict()
+botnet_ip_dict = df.Botnet.value_counts().to_dict()
+SourceIpAsnNr_dict = df.SourceIpAsnNr.value_counts().to_dict()
+SourceIpCity_dict = df.SourceIpCity.value_counts().to_dict()
+Threat_Confidence_dict = df['Threat.Confidence'].value_counts().to_dict()
+# changing variables
+df.SourceIp = df.SourceIp.apply(lambda x: source_ip_dict[x])
+df.TargetIp = df.TargetIp.apply(lambda x: target_ip_dict[x])
+df.Botnet = df.Botnet.apply(lambda x: botnet_ip_dict[x])
+df.SourceIpAsnNr = df.SourceIpAsnNr.apply(lambda x: SourceIpAsnNr_dict[x])
+df.SourceIpCity = df.SourceIpCity.apply(lambda x: SourceIpCity_dict[x])
+df['Threat.Confidence'] = df['Threat.Confidence'].apply(lambda x: Threat_Confidence_dict[x])
+X = df.drop(labels = ['Prediction'], axis= 1)
+y = df['Prediction']
+print(f'Shape of Input variables: {X.shape}, shape of output variable: {y.shape}')
+X_train, X_test, y_train, y_test = train_test_split(X, y,
+                                                    test_size=0.30,
+                                                    random_state=42)
+# visualising the high dimensional dataset using Tsne
+def plot_TSNE(perplexity = None, x = None, y = None):    
+    X_embedded = TSNE(n_components=2, perplexity=perplexity,n_iter=1500,n_jobs=-1).fit_transform(X)
+    embedded = pd.DataFrame(X_embedded)
+    embedded.columns = ["f1", "f2"]
+    embedded["class"] = y
+    plt.figure(figsize = (12, 8))
+    sns.scatterplot(x="f1", y="f2", hue="class", data = embedded)
+plot_TSNE(perplexity = 50, x = X_train, y = y_train)
+# performing oversampling so that we have same number of classes
+ros = RandomOverSampler(random_state=42)
+X_train, y_train = ros.fit_resample(X_train, y_train)
+# scaling both the input variables using min max scaler
+scaler = MinMaxScaler()
+scaler.fit(X_train)
+X_train = scaler.transform(X_train)
+X_test = scaler.transform(X_test)
+# defining parameter range
+svc_param_grid = { 'C':[0.1,10, 100],
+                  'kernel':['rbf','sigmoid','linear'],
+                  'degree':[1,2,3,4,5,6],
+                  'gamma': [1, 0.1, 0.01, 0.001, 0.0001]}
+ 
+svc_grid = GridSearchCV(SVC(),
+                    svc_param_grid,
+                    refit = True,
+                    verbose = 3,
+                    scoring = "accuracy",
+                    n_jobs = -1)
+
+svc_grid.fit(X_train, y_train)
+# best estimator
+print(svc_grid.best_estimator_)
+# prediction on both training and test set
+y_test_pred = svc_grid.predict(X_test)
+y_train_pred = svc_grid.predict(X_train)
+
+acc_score_test = accuracy_score(y_test, y_test_pred)
+acc_score_train = accuracy_score(y_train, y_train_pred)
+
+print(f"Training accuracy: {round(acc_score_train * 100, 2)}%, Test Accuracy: {round(acc_score_test* 100, 2)}%")
+cf_matrix = confusion_matrix(y_test, y_test_pred)
+sns.heatmap(cf_matrix/np.sum(cf_matrix), annot=True, fmt='.2%', cmap='Purples');
+# c vcalues for performing hyperparameter tuning
+C_vals = [10**-4,10**-3,10**-2,10**-1,10**0,10**1,10**2,10**3,10**4]
+
+# training a single logistic regresion model for each c value
+for num in C_vals:
+    clf = LogisticRegression(C=num, n_jobs=-1, penalty='l2')
+    clf.fit(X_train, y_train)
+    predicted = clf.predict(X_test)
+    f1 = f1_score(y_test, predicted)
+    # some performance metrics score
+    print(f"F1 score = {f1}")
+    print("C value = {}".format(num))
+    print("Train Accuracy = {}%".format(clf.score(X_train, y_train)*100))
+    print("Test Accuracy = {}%".format(clf.score(X_test, y_test)*100))
+    print(70*"=")
+# best logistic regresion model got 100% accuracy.
+y_pred = clf.predict(X_test)
+cf_matrix = confusion_matrix(y_test, y_pred)
+sns.heatmap(cf_matrix/np.sum(cf_matrix), annot=True, 
+            fmt='.2%', cmap='Purples');
+print(classification_report(y_test, y_pred))
+# decision tree model parameter
+DT_param_grid = {'max_features': ['auto', 'sqrt', 'log2'],
+              'ccp_alpha': [0.1, .01, .001, 0.0001],
+              'max_depth' : [5, 6, 7, 8, 9, 10, 12, 14],
+              'criterion' :['gini', 'entropy']}
+# training decision tree model
+tree = DecisionTreeClassifier(random_state=1024)
+grid_search_dt = GridSearchCV(estimator=tree,
+                           param_grid=DT_param_grid,
+                           verbose=True)
+grid_search_dt.fit(X_train, y_train)
+# best estimator
+print(grid_search_dt.best_estimator_)
+# prediction on both training and test set
+y_test_pred = grid_search_dt.predict(X_test)
+y_train_pred = grid_search_dt.predict(X_train)
+
+acc_score_test = accuracy_score(y_test, y_test_pred)
+acc_score_train = accuracy_score(y_train, y_train_pred)
+
+print(f"Training accuracy: {round(acc_score_train * 100, 2)}%, Test Accuracy: {round(acc_score_test* 100, 2)}%")
+# best logistic regresion model got 100% accuracy.
+y_pred = grid_search_dt.predict(X_test)
+cf_matrix = confusion_matrix(y_test, y_pred)
+sns.heatmap(cf_matrix/np.sum(cf_matrix), annot=True, 
+            fmt='.2%', cmap='Purples');
+print(classification_report(y_test, y_pred))
